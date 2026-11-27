@@ -1,0 +1,70 @@
+{
+  "name": "yamlcage",
+  "version": "1.0.0",
+  "description": "Zero-dependency strict YAML 1.2 Core Schema security parser, pre-parse auditor, canonical serializer, and CLI",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/draarivpatel-ui/yamlcage.git"
+  },
+  "homepage": "https://github.com/draarivpatel-ui/yamlcage#readme",
+  "bugs": {
+    "url": "https://github.com/draarivpatel-ui/yamlcage/issues"
+  },
+  "type": "module",
+  "main": "./cjs/index.cjs",
+  "module": "./src/index.mjs",
+  "types": "./types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "import": "./src/index.mjs",
+      "require": "./cjs/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "yamlcage": "bin/yamlcage.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "cjs",
+    "types",
+    "docs",
+    "README.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build:cjs": "node scripts/build-cjs.mjs",
+    "check:cjs": "node scripts/build-cjs.mjs --check",
+    "smoke": "node scripts/cli-smoke.mjs",
+    "test": "node scripts/run-tests.mjs"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "security",
+    "yaml",
+    "yaml-parser",
+    "yaml-1-2",
+    "core-schema",
+    "billion-laughs",
+    "alias-bomb",
+    "cwe-502",
+    "cwe-776",
+    "prototype-pollution",
+    "merge-keys",
+    "duplicate-keys",
+    "norway-problem",
+    "denial-of-service",
+    "zero-dependency",
+    "nodejs"
+  ],
+  "license": "MIT",
+  "sideEffects": false,
+  "dependencies": {},
+  "devDependencies": {}
+}

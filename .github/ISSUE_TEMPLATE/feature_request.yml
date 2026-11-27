@@ -1,0 +1,34 @@
+name: Feature request
+description: Request a documented safe-subset addition or hardening improvement
+title: "feature: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What safe YAML use case is currently impossible or too difficult?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Explain the exact input, output, errors and default security posture.
+    validations:
+      required: true
+  - type: textarea
+    id: risks
+    attributes:
+      label: Security risks and parser differentials
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Scope checks
+      options:
+        - label: This is not a request for arbitrary object deserialization
+          required: true
+        - label: This is not a security vulnerability report
+          required: true

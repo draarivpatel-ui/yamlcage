@@ -1,0 +1,42 @@
+name: Bug report
+description: Report a reproducible non-security yamlcage defect
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include exploit payloads or security-sensitive parser bypasses here. Use a private GitHub Security Advisory for those reports.
+  - type: input
+    id: version
+    attributes:
+      label: yamlcage version
+      placeholder: 1.0.0
+    validations:
+      required: true
+  - type: input
+    id: node
+    attributes:
+      label: Node.js version and operating system
+      placeholder: Node 20 on Ubuntu
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include the smallest YAML input, options object and JavaScript call that show the defect.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true

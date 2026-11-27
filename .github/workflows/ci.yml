@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+        node: [18, 20, 22, 24]
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Run deterministic test suite
+        shell: bash
+        run: npm test
+      - name: Verify generated CommonJS build is current
+        shell: bash
+        run: node scripts/build-cjs.mjs --check
+      - name: Run CLI smoke test
+        shell: bash
+        run: node scripts/cli-smoke.mjs
+      - name: Verify package tarball contents
+        shell: bash
+        run: npm pack --dry-run
