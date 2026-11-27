@@ -285,3 +285,15 @@ test('CLI error output neutralizes carriage return and tab injection', () => {
   assert.equal(result.stderr.includes('\r'), false);
   assert.equal(result.stderr.includes('\t'), false);
 });
+
+test('CLI duplicate max bytes flags are rejected even when the first uses the default', () => {
+  const result = runCli(['check', '-', '--max-bytes', '1048576', '--max-bytes', '100'], { input: 'a: 1\n' });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /check requires exactly one input/);
+});
+
+test('CLI duplicate max depth flags are rejected across separate and equals forms', () => {
+  const result = runCli(['check', '-', '--max-depth=32', '--max-depth', '2'], { input: 'a: 1\n' });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /check requires exactly one input/);
+});

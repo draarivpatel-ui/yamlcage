@@ -67,7 +67,7 @@ export class YamlCageError extends Error {
       code: this.code,
       reason: this.reason
     };
-    for (const key of ['position', 'line', 'column', 'key', 'anchor', 'alias', 'tag', 'limit', 'actual', 'depth', 'document']) {
+    for (const key of ['position', 'line', 'column', 'key', 'anchor', 'alias', 'tag', 'limit', 'actual', 'depth', 'document', 'path']) {
       if (this[key] !== undefined) output[key] = this[key];
     }
     return output;

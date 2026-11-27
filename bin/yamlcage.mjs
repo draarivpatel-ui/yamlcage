@@ -67,6 +67,7 @@ function parseCheckArgs(args) {
     maxDepth: DEFAULT_MAX_DEPTH,
     input: null
   };
+  const seenLimits = new Set();
   for (let index = 0; index < args.length; index += 1) {
     const token = args[index];
     if (token === '--json') {
@@ -83,13 +84,10 @@ function parseCheckArgs(args) {
       if (index + 1 >= args.length) return null;
       const parsed = parseLimit(args[index + 1]);
       if (parsed === null) return null;
-      if (token === '--max-bytes') {
-        if (result.maxBytes !== DEFAULT_MAX_BYTES) return null;
-        result.maxBytes = parsed;
-      } else {
-        if (result.maxDepth !== DEFAULT_MAX_DEPTH) return null;
-        result.maxDepth = parsed;
-      }
+      const key = token === '--max-bytes' ? 'maxBytes' : 'maxDepth';
+      if (seenLimits.has(key)) return null;
+      seenLimits.add(key);
+      result[key] = parsed;
       index += 1;
       continue;
     }
@@ -98,13 +96,10 @@ function parseCheckArgs(args) {
       const flag = token.slice(0, equals);
       const parsed = parseLimit(token.slice(equals + 1));
       if (parsed === null) return null;
-      if (flag === '--max-bytes') {
-        if (result.maxBytes !== DEFAULT_MAX_BYTES) return null;
-        result.maxBytes = parsed;
-      } else {
-        if (result.maxDepth !== DEFAULT_MAX_DEPTH) return null;
-        result.maxDepth = parsed;
-      }
+      const key = flag === '--max-bytes' ? 'maxBytes' : 'maxDepth';
+      if (seenLimits.has(key)) return null;
+      seenLimits.add(key);
+      result[key] = parsed;
       continue;
     }
     if (token.startsWith('-') && token !== '-') return null;

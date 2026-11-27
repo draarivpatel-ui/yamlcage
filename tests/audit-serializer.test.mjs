@@ -475,3 +475,14 @@ test('wide serializer input fails by key budget before output amplification', ()
   assertCode(() => stringifySafeYaml(input, { maxKeys: 1000, maxOutputBytes: 100 }), 'YAMLCAGE_MAX_KEYS');
   assert.ok(Date.now() - start < 1000, 'wide input should fail promptly');
 });
+
+test('structured serializer error JSON retains the object path', () => {
+  try {
+    stringifySafeYaml({ a: { b: 1n } });
+    assert.fail('expected serializer rejection');
+  } catch (error) {
+    assert.equal(error instanceof YamlCageError, true);
+    assert.equal(error.path, '$.a.b');
+    assert.equal(JSON.parse(JSON.stringify(error)).path, '$.a.b');
+  }
+});
