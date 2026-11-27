@@ -28,7 +28,7 @@ function usage() {
 }
 
 function neutralize(text) {
-  return String(text).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, '?');
+  return String(text).replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u206f]/g, '?');
 }
 
 function neutralizeDeep(value) {

@@ -294,3 +294,35 @@ test('block parser iteratively accepts configured nesting beyond legacy stack de
   }
   assert.equal(seen, depth);
 });
+
+test('audit reports tab indentation instead of throwing', () => {
+  const report = auditYaml('a:\n\tb: 1\n');
+  assert.equal(report.safe, false);
+  assert.equal(report.findings.some((finding) => finding.code === 'YAMLCAGE_SYNTAX_ERROR'), true);
+});
+
+test('audit scanner findings are capped', () => {
+  const aliases = Array.from({ length: 30 }, (_, index) => '&a' + index + ' x').join(',');
+  const report = auditYaml('root: [' + aliases + ']\n', { maxFindings: 5 });
+  assert.equal(report.findings.length, 5);
+  assert.equal(report.findings[4].code, 'YAMLCAGE_MAX_FINDINGS');
+  assert.equal(report.safe, false);
+});
+
+test('audit Norway warning volume is capped', () => {
+  const values = Array.from({ length: 30 }, () => 'yes').join(',');
+  const report = auditYaml('root: [' + values + ']\n', { maxFindings: 4, maxSequenceLength: 100 });
+  assert.equal(report.findings.length, 4);
+  assert.equal(report.findings[3].code, 'YAMLCAGE_MAX_FINDINGS');
+  assert.equal(report.safe, false);
+});
+
+test('exactly capped Norway warnings do not become unsafe', () => {
+  const report = auditYaml('root: [yes, yes]\n', { maxFindings: 2 });
+  assert.equal(report.safe, true);
+  assert.equal(report.findings.length, 2);
+});
+
+test('invalid maxFindings option is rejected', () => {
+  assertCode(() => auditYaml('a: 1\n', { maxFindings: 0 }), 'YAMLCAGE_INVALID_OPTIONS');
+});

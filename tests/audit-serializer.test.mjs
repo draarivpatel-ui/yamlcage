@@ -381,3 +381,97 @@ test('serializer rejects symbol-keyed objects instead of dropping data', () => {
   input[Symbol('hidden')] = 1;
   assertCode(() => stringifySafeYaml(input), 'YAMLCAGE_UNSUPPORTED_VALUE');
 });
+
+for (const value of ['...', '...document', 'foo:', 'x:']) {
+  test('serializer root scalar round trip protects structural text ' + JSON.stringify(value), () => {
+    const yaml = stringifySafeYaml(value);
+    assert.equal(yaml.startsWith('"'), true, yaml);
+    assert.equal(parseSafeYaml(yaml), value);
+  });
+}
+
+for (const value of ['0XFF', '0O755', '+0X10', '0B101', '2024-1-1']) {
+  test('serializer quotes conservatively ambiguous numeric or timestamp text ' + JSON.stringify(value), () => {
+    const yaml = stringifySafeYaml({ value });
+    assert.equal(yaml.startsWith('value: "'), true, yaml);
+    assert.equal(parseSafeYaml(yaml).value, value);
+  });
+}
+
+for (const badOptions of [42, true, 'strict', []]) {
+  test('serializer rejects malformed options ' + Object.prototype.toString.call(badOptions), () => {
+    assertCode(() => stringifySafeYaml({ a: 1 }, badOptions), 'YAMLCAGE_INVALID_OPTIONS');
+  });
+}
+
+test('configured instance rejects malformed per-call overrides', () => {
+  const cage = createYamlCage({ allowAliases: true });
+  assertCode(() => cage.parse('a: 1\n', 42), 'YAMLCAGE_INVALID_OPTIONS');
+  assertCode(() => cage.stringify({ a: 1 }, false), 'YAMLCAGE_INVALID_OPTIONS');
+});
+
+test('serializer rejects accessor properties without invoking them', () => {
+  let calls = 0;
+  const input = {};
+  Object.defineProperty(input, 'x', {
+    enumerable: true,
+    get() {
+      calls += 1;
+      return 1;
+    }
+  });
+  assertCode(() => stringifySafeYaml(input), 'YAMLCAGE_UNSUPPORTED_VALUE');
+  assert.equal(calls, 0);
+});
+
+test('serializer rejects additional enumerable array properties', () => {
+  const input = [1];
+  input.extra = 'hidden';
+  assertCode(() => stringifySafeYaml(input), 'YAMLCAGE_UNSUPPORTED_VALUE');
+});
+
+test('serializer rejects sparse arrays explicitly', () => {
+  const input = [1];
+  input.length = 3;
+  assertCode(() => stringifySafeYaml(input), 'YAMLCAGE_UNSUPPORTED_VALUE');
+});
+
+test('serializer enforces mapping key count limit', () => {
+  assertCode(() => stringifySafeYaml({ a: 1, b: 2 }, { maxKeys: 1 }), 'YAMLCAGE_MAX_KEYS');
+});
+
+test('serializer enforces sequence length limit', () => {
+  assertCode(() => stringifySafeYaml([1, 2], { maxSequenceLength: 1 }), 'YAMLCAGE_MAX_SEQUENCE_LENGTH');
+});
+
+test('serializer enforces nesting depth limit', () => {
+  assertCode(() => stringifySafeYaml({ a: { b: 1 } }, { maxDepth: 1 }), 'YAMLCAGE_MAX_DEPTH');
+});
+
+test('serializer enforces node count limit', () => {
+  assertCode(() => stringifySafeYaml({ a: 1, b: 2 }, { maxNodes: 2 }), 'YAMLCAGE_MAX_NODES');
+});
+
+test('serializer enforces string length limit', () => {
+  assertCode(() => stringifySafeYaml({ a: 'abcd' }, { maxStringLength: 3 }), 'YAMLCAGE_MAX_STRING_LENGTH');
+});
+
+test('serializer enforces key length limit', () => {
+  assertCode(() => stringifySafeYaml({ abcd: 1 }, { maxKeyLength: 3 }), 'YAMLCAGE_MAX_KEY_LENGTH');
+});
+
+test('serializer rejects bidirectional controls in strings and keys', () => {
+  const bidi = String.fromCharCode(0x202e);
+  assertCode(() => stringifySafeYaml({ value: 'x' + bidi + 'y' }), 'YAMLCAGE_CONTROL_CHARACTER');
+  const input = Object.create(null);
+  input[bidi + 'key'] = 1;
+  assertCode(() => stringifySafeYaml(input), 'YAMLCAGE_CONTROL_CHARACTER');
+});
+
+test('wide serializer input fails by key budget before output amplification', () => {
+  const input = {};
+  for (let index = 0; index < 2000; index += 1) input['k' + index] = 1;
+  const start = Date.now();
+  assertCode(() => stringifySafeYaml(input, { maxKeys: 1000, maxOutputBytes: 100 }), 'YAMLCAGE_MAX_KEYS');
+  assert.ok(Date.now() - start < 1000, 'wide input should fail promptly');
+});

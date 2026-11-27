@@ -36,6 +36,7 @@ export interface YamlCageErrorCodes {
   readonly UNSUPPORTED_VALUE: 'YAMLCAGE_UNSUPPORTED_VALUE';
   readonly CYCLE_DETECTED: 'YAMLCAGE_CYCLE_DETECTED';
   readonly MAX_OUTPUT_BYTES: 'YAMLCAGE_MAX_OUTPUT_BYTES';
+  readonly MAX_FINDINGS: 'YAMLCAGE_MAX_FINDINGS';
 }
 
 export const YAMLCAGE_ERROR_CODES: YamlCageErrorCodes;
@@ -76,6 +77,7 @@ export interface YamlCageOptions {
   readonly maxAliasDepth?: number;
   readonly maxExpandedNodes?: number;
   readonly maxOutputBytes?: number;
+  readonly maxFindings?: number;
   readonly allowAliases?: boolean;
   readonly allowMergeKeys?: boolean;
   readonly allowSafeTags?: boolean;
@@ -100,6 +102,7 @@ export interface ResolvedYamlCageOptions {
   readonly maxAliasDepth: number;
   readonly maxExpandedNodes: number;
   readonly maxOutputBytes: number;
+  readonly maxFindings: number;
   readonly allowAliases: boolean;
   readonly allowMergeKeys: boolean;
   readonly allowSafeTags: boolean;

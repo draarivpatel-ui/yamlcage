@@ -46,7 +46,8 @@ const YAMLCAGE_ERROR_CODES = Object.freeze({
   TAG_TYPE_MISMATCH: 'YAMLCAGE_TAG_TYPE_MISMATCH',
   UNSUPPORTED_VALUE: 'YAMLCAGE_UNSUPPORTED_VALUE',
   CYCLE_DETECTED: 'YAMLCAGE_CYCLE_DETECTED',
-  MAX_OUTPUT_BYTES: 'YAMLCAGE_MAX_OUTPUT_BYTES'
+  MAX_OUTPUT_BYTES: 'YAMLCAGE_MAX_OUTPUT_BYTES',
+  MAX_FINDINGS: 'YAMLCAGE_MAX_FINDINGS'
 });
 
 const CODE = YAMLCAGE_ERROR_CODES;
@@ -95,6 +96,7 @@ const YAML_CAGE_DEFAULT_OPTIONS = Object.freeze({
   maxAliasDepth: 4,
   maxExpandedNodes: 5000,
   maxOutputBytes: 1048576,
+  maxFindings: 1024,
   allowAliases: false,
   allowMergeKeys: false,
   allowSafeTags: false,
@@ -119,7 +121,8 @@ const INTEGER_OPTION_KEYS = [
   'maxAliases',
   'maxAliasDepth',
   'maxExpandedNodes',
-  'maxOutputBytes'
+  'maxOutputBytes',
+  'maxFindings'
 ];
 const BOOLEAN_OPTION_KEYS = [
   'allowAliases',
@@ -137,13 +140,14 @@ function invalidOptions(message, key) {
   throw new YamlCageError(ERROR.INVALID_OPTIONS, message, { key });
 }
 
-function normalizeOptions(input) {
+function normalizeOptionsDetailed(input) {
   if (input === undefined || input === null) input = {};
   if (typeof input !== 'object' || Array.isArray(input)) {
     invalidOptions('options must be a plain object', 'options');
   }
+  const providedKeys = Object.keys(input);
   const output = {};
-  for (const key of Object.keys(input)) {
+  for (const key of providedKeys) {
     if (!OPTION_KEYS.has(key)) invalidOptions('unknown option', key);
   }
   for (const key of Object.keys(YAML_CAGE_DEFAULT_OPTIONS)) {
@@ -159,10 +163,23 @@ function normalizeOptions(input) {
   if (output.maxDocuments < 1) invalidOptions('maxDocuments must be at least 1', 'maxDocuments');
   if (output.maxKeys < 1) invalidOptions('maxKeys must be at least 1', 'maxKeys');
   if (output.maxSequenceLength < 1) invalidOptions('maxSequenceLength must be at least 1', 'maxSequenceLength');
+  if (output.maxFindings < 1) invalidOptions('maxFindings must be at least 1', 'maxFindings');
   for (const key of BOOLEAN_OPTION_KEYS) {
     if (typeof output[key] !== 'boolean') invalidOptions(key + ' must be a boolean', key);
   }
-  return Object.freeze(output);
+  return { options: Object.freeze(output), providedKeys };
+}
+
+function normalizeOptions(input) {
+  return normalizeOptionsDetailed(input).options;
+}
+
+function mergeNormalizedOptions(base, overrides) {
+  const detailed = normalizeOptionsDetailed(overrides);
+  if (detailed.providedKeys.length === 0) return base;
+  const merged = { ...base };
+  for (const key of detailed.providedKeys) merged[key] = detailed.options[key];
+  return normalizeOptions(merged);
 }
 
 function utf8Length(value) {
@@ -185,6 +202,7 @@ function createContext(options) {
     expandedNodes: 0,
     maxDepthSeen: 0,
     warnings: [],
+    warningsTruncated: 0,
     anchors: new Map(),
     openAnchors: [],
     openAnchorNames: new Set()
@@ -228,6 +246,21 @@ function isWhitespace(ch) {
   return ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r';
 }
 
+function isBidiControlCode(code) {
+  return code === 0x061c ||
+    code === 0x200e ||
+    code === 0x200f ||
+    (code >= 0x202a && code <= 0x202e) ||
+    (code >= 0x2066 && code <= 0x206f);
+}
+
+function hasBidiControl(value) {
+  for (let index = 0; index < value.length; index += 1) {
+    if (isBidiControlCode(value.charCodeAt(index))) return true;
+  }
+  return false;
+}
+
 function validateCharacters(text) {
   for (let index = 0; index < text.length; index += 1) {
     const code = text.charCodeAt(index);
@@ -256,6 +289,14 @@ function validateCharacters(text) {
     if (!allowed && ((code >= 0x00 && code <= 0x1f) || (code >= 0x7f && code <= 0x9f))) {
       const position = positionAt(text, index);
       throw new YamlCageError(ERROR.CONTROL_CHARACTER, 'input contains a forbidden control character', {
+        position: index,
+        line: position.line,
+        column: position.column
+      });
+    }
+    if (isBidiControlCode(code)) {
+      const position = positionAt(text, index);
+      throw new YamlCageError(ERROR.CONTROL_CHARACTER, 'input contains a bidirectional control character', {
         position: index,
         line: position.line,
         column: position.column
@@ -485,6 +526,12 @@ function indentationOf(raw, lineNumber) {
   return indent;
 }
 
+function indentationForScan(raw) {
+  let indent = 0;
+  while (indent < raw.length && raw[indent] === ' ') indent += 1;
+  return indent;
+}
+
 class LineCursor {
   constructor(lines) {
     this.lines = lines;
@@ -682,6 +729,9 @@ function validateScalarText(value, line, column) {
     if (code >= 0xdc00 && code <= 0xdfff) {
       throw new YamlCageError(ERROR.LONE_SURROGATE, 'scalar contains a lone UTF-16 surrogate', { line, column });
     }
+    if (isBidiControlCode(code)) {
+      throw new YamlCageError(ERROR.CONTROL_CHARACTER, 'scalar contains a bidirectional control character', { line, column });
+    }
   }
 }
 
@@ -731,14 +781,16 @@ const YAML11_AMBIGUOUS_WORDS = new Set([
 
 function noteNorwayScalar(raw, ctx, line, column) {
   if (!ctx.options.warnNorwayScalars || !YAML11_AMBIGUOUS_WORDS.has(raw)) return;
-  ctx.warnings.push({
+  const warning = {
     code: ERROR.NORWAY_AMBIGUITY_WARN,
     severity: 'warning',
     message: 'scalar stays a string in YAML 1.2 but is a boolean in YAML 1.1',
     line,
     column,
     value: raw
-  });
+  };
+  if (ctx.warnings.length < ctx.options.maxFindings) ctx.warnings.push(warning);
+  else ctx.warningsTruncated += 1;
 }
 
 function parseIntegerText(raw) {
@@ -836,11 +888,17 @@ function validateFloatResult(value, raw, ctx, line, column) {
   return value;
 }
 
-function parseTaggedScalar(tag, value, ctx, line, column) {
+function parseTaggedScalar(tag, value, ctx, line, column, scalarInfo) {
   if (value !== null && typeof value === 'object') {
     throw new YamlCageError(ERROR.TAG_TYPE_MISMATCH, 'scalar YAML tags cannot be applied to collections', { line, column, tag });
   }
-  if (tag === '!!str') return String(value);
+  if (tag === '!!str') {
+    const output = scalarInfo && typeof scalarInfo.scalarText === 'string'
+      ? scalarInfo.scalarText
+      : value === null ? '' : String(value);
+    validateStringLength(output, ctx, line, column);
+    return output;
+  }
   if (tag === '!!null') {
     if (value === null || value === 'null' || value === 'Null' || value === 'NULL' || value === '~' || value === '') return null;
     throw new YamlCageError(ERROR.TAG_TYPE_MISMATCH, '!!null scalar is not null', { line, column, tag });
@@ -900,7 +958,7 @@ function validateTag(tag, ctx, line, column) {
   }
 }
 
-function applyTagAndAnchor(value, meta, ctx, line, column) {
+function applyTagAndAnchor(value, meta, ctx, line, column, scalarInfo) {
   let output = value;
   if (meta.tag !== null) {
     if (meta.tag === '!!map') {
@@ -912,7 +970,7 @@ function applyTagAndAnchor(value, meta, ctx, line, column) {
         throw new YamlCageError(ERROR.TAG_TYPE_MISMATCH, '!!seq node is not a sequence', { line, column, tag: meta.tag });
       }
     } else {
-      output = parseTaggedScalar(meta.tag, output, ctx, line, column);
+      output = parseTaggedScalar(meta.tag, output, ctx, line, column, scalarInfo);
     }
   }
   if (meta.anchorRecord) {
@@ -1140,9 +1198,9 @@ function parseScalarTokenValue(scanned, ctx, line, column) {
   countNode(ctx, line, column);
   if (!scanned.plain) {
     validateStringLength(scanned.value, ctx, line, column);
-    return scanned.value;
+    return { value: scanned.value, scalarText: scanned.value };
   }
-  return resolvePlainScalar(scanned.raw, ctx, line, column);
+  return { value: resolvePlainScalar(scanned.raw, ctx, line, column), scalarText: scanned.raw };
 }
 
 function parseAliasToken(text, cursor, ctx, line, column) {
@@ -1363,6 +1421,9 @@ function parseFlow(text, start, ctx, depth, line, column) {
         syntaxError('reserved YAML indicator characters cannot start a plain scalar', line, column + cursor);
       }
       if (nodeStart === '*') {
+        if (meta.anchor !== null || meta.tag !== null) {
+          syntaxError('YAML aliases cannot carry anchors or tags in the safe subset', line, column + cursor);
+        }
         const alias = parseAliasToken(text, cursor, ctx, line, column);
         countNode(ctx, line, column + cursor);
         cursor = alias.end;
@@ -1376,7 +1437,7 @@ function parseFlow(text, start, ctx, depth, line, column) {
       }
       const scalar = parseScalarTokenValue(scanned, ctx, line, column + cursor);
       cursor = scanned.end;
-      integrateValue(applyTagAndAnchor(scalar, meta, ctx, line, column + cursor));
+      integrateValue(applyTagAndAnchor(scalar.value, meta, ctx, line, column + cursor, scalar));
       continue;
     }
     syntaxError('unexpected flow collection state', line, column + cursor);
@@ -1871,6 +1932,10 @@ function scanQuotedEnd(text, start) {
 function pushScanFinding(findings, seen, finding) {
   const key = finding.code + '|' + finding.line + '|' + finding.column + '|' + (finding.tag || finding.anchor || finding.alias || finding.key || '');
   if (seen.has(key)) return;
+  if (findings.length >= seen.maxFindings) {
+    seen.dropped += 1;
+    return;
+  }
   seen.add(key);
   findings.push(finding);
 }
@@ -1980,7 +2045,7 @@ function scanInlineThreats(text, flow, findings, seen, options, line, columnOffs
   }
 }
 
-function scanBlockKey(content, findings, seen, line, indent) {
+function scanBlockKey(content, findings, seen, line, indent, options) {
   const split = splitMappingKey(content);
   if (!split) return null;
   let key;
@@ -1999,7 +2064,7 @@ function scanBlockKey(content, findings, seen, line, indent) {
       key
     });
   }
-  if (key === '<<') {
+  if (key === '<<' && !options.allowMergeKeys) {
     pushScanFinding(findings, seen, {
       code: ERROR.MERGE_KEY_FORBIDDEN,
       severity: 'error',
@@ -2028,7 +2093,7 @@ function scanDocumentThreats(document, documentIndex, findings, seen, options) {
       });
       continue;
     }
-    const indent = indentationOf(raw, entry.line);
+    const indent = indentationForScan(raw);
     if (blockScalarParent !== null) {
       if (raw.trim() === '' || indent > blockScalarParent) continue;
       blockScalarParent = null;
@@ -2048,12 +2113,12 @@ function scanDocumentThreats(document, documentIndex, findings, seen, options) {
       valueColumn = indent + 2;
       const compactSplit = splitMappingKey(rest);
       if (compactSplit) {
-        scanBlockKey(rest, findings, seen, entry.line, indent + 2);
+        scanBlockKey(rest, findings, seen, entry.line, indent + 2, options);
         valueText = rest.slice(compactSplit.valueStart).trim();
         valueColumn = indent + 2 + compactSplit.valueStart;
       }
     } else {
-      const split = scanBlockKey(content, findings, seen, entry.line, indent);
+      const split = scanBlockKey(content, findings, seen, entry.line, indent, options);
       if (split) {
         valueText = content.slice(split.valueStart).trim();
         valueColumn = indent + split.valueStart + 1;
@@ -2075,10 +2140,12 @@ function scanDocumentThreats(document, documentIndex, findings, seen, options) {
 function scanYamlThreats(documents, options) {
   const findings = [];
   const seen = new Set();
+  seen.maxFindings = options.maxFindings;
+  seen.dropped = 0;
   for (let index = 0; index < documents.length; index += 1) {
     scanDocumentThreats(documents[index], index + 1, findings, seen, options);
   }
-  return findings;
+  return { findings, dropped: seen.dropped };
 }
 
 function freezeFindings(findings) {
@@ -2164,8 +2231,14 @@ function auditYaml(input, options) {
     return Object.freeze({ safe: false, findings: freezeFindings(findings), stats });
   }
 
+  let droppedFindings = 0;
+  const pushAuditFinding = (finding) => {
+    if (findings.length < normalized.maxFindings) findings.push(finding);
+    else droppedFindings += 1;
+  };
+
   if (documents.length > normalized.maxDocuments) {
-    findings.push({
+    pushAuditFinding({
       code: ERROR.MAX_DOCUMENTS,
       severity: 'error',
       message: 'YAML document count limit exceeded',
@@ -2175,7 +2248,7 @@ function auditYaml(input, options) {
     });
   }
   if (documents.length > 1 && !normalized.allowMultiDocument) {
-    findings.push({
+    pushAuditFinding({
       code: ERROR.MULTI_DOCUMENT,
       severity: 'error',
       message: 'multi-document YAML stream detected',
@@ -2186,10 +2259,11 @@ function auditYaml(input, options) {
     });
   }
 
-  const scanSeen = new Set();
-  for (const finding of scanYamlThreats(documents, normalized)) {
+  const scanned = scanYamlThreats(documents, normalized);
+  droppedFindings += scanned.dropped;
+  for (const finding of scanned.findings) {
     if (finding.code === ERROR.MERGE_KEY_FORBIDDEN && normalized.allowMergeKeys) continue;
-    pushScanFinding(findings, scanSeen, finding);
+    pushAuditFinding(finding);
   }
 
   const ctx = createContext(normalized);
@@ -2203,12 +2277,22 @@ function auditYaml(input, options) {
       const finding = findingFromError(error, index + 1);
       const tokenIdentity = (item) => item.code + '|' + (item.key || '') + '|' + (item.anchor || '') + '|' + (item.alias || '') + '|' + (item.tag || '');
       const duplicate = findings.some((existing) => tokenIdentity(existing) === tokenIdentity(finding));
-      if (!duplicate) findings.push(finding);
+      if (!duplicate) pushAuditFinding(finding);
     }
   }
+  droppedFindings += ctx.warningsTruncated;
   for (const warning of ctx.warnings) {
     const severity = normalized.strictNorwayScalars ? 'error' : 'warning';
-    findings.push({ ...warning, severity });
+    pushAuditFinding({ ...warning, severity });
+  }
+  if (droppedFindings > 0) {
+    findings[normalized.maxFindings - 1] = {
+      code: ERROR.MAX_FINDINGS,
+      severity: 'error',
+      message: 'audit finding count exceeded the reporting cap',
+      limit: normalized.maxFindings,
+      actual: normalized.maxFindings + droppedFindings
+    };
   }
   const safe = !findings.some((finding) => finding.severity === 'error');
   const stats = Object.freeze({
@@ -2264,13 +2348,14 @@ function escapeDoubleQuotedString(value) {
 
 const PLAIN_FORBIDDEN_START = new Set(['-', '?', ':', ',', '[', ']', '{', '}', '#', '&', '*', '!', '|', '>', "'", '"', '%', '@', '`']);
 const YAML12_WORDS = new Set(['true', 'True', 'TRUE', 'false', 'False', 'FALSE', 'null', 'Null', 'NULL', '~']);
-const NUMERIC_LOOKING = /^[+-]?(?:0x[0-9a-fA-F]+|0o[0-7]+|[0-9]+|(?:[0-9]+\.[0-9]*)|(?:\.[0-9]+)|(?:[0-9]+[eE][+-]?[0-9]+)|(?:[0-9]+\.[0-9]*[eE][+-]?[0-9]+)|(?:\.[0-9]+[eE][+-]?[0-9]+)|\.nan|\.NaN|\.NAN|\.inf|\.Inf|\.INF|NaN|nan|NAN|Infinity|infinity|INFINITY)$/;
-const YAML11_NUMERIC_LOOKING = /^[+-]?(?:0b[01_]+|[0-9][0-9_]+|[0-9]+(?::[0-5]?[0-9])+(?:\.[0-9_]*)?)$/;
-const TIMESTAMP_LOOKING = /^[0-9]{4}-[0-9]{2}-[0-9]{2}(?:[Tt ][0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?(?:[Zz]|[+-][0-9]{2}(?::?[0-9]{2})?)?)?$/;
+const NUMERIC_LOOKING = /^[+-]?(?:0[xX][0-9a-fA-F]+|0[oO][0-7]+|[0-9]+|(?:[0-9]+\.[0-9]*)|(?:\.[0-9]+)|(?:[0-9]+[eE][+-]?[0-9]+)|(?:[0-9]+\.[0-9]*[eE][+-]?[0-9]+)|(?:\.[0-9]+[eE][+-]?[0-9]+)|\.[nN][aA][nN]|\.[iI][nN][fF]|[+-]?\.[iI][nN][fF]|[+-]?(?:inf|Inf|INF|infinity|Infinity|INFINITY)|[nN][aA][nN])$/;
+const YAML11_NUMERIC_LOOKING = /^[+-]?(?:0[bB][01_]+|[0-9][0-9_]+|[0-9]+(?::[0-5]?[0-9])+(?:\.[0-9_]*)?)$/;
+const TIMESTAMP_LOOKING = /^[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}(?:[Tt ][0-9]{1,2}:[0-9]{1,2}:[0-9]{1,2}(?:\.[0-9]+)?(?:[Zz]|[+-][0-9]{1,2}(?::?[0-9]{2})?)?)?$/;
 
 function canUsePlainString(value) {
   if (value.length === 0) return false;
   if (value !== value.trim()) return false;
+  if (value.endsWith(':') || value.startsWith('...')) return false;
   if (YAML12_WORDS.has(value) || YAML11_AMBIGUOUS_WORDS.has(value) || NUMERIC_LOOKING.test(value) || YAML11_NUMERIC_LOOKING.test(value) || TIMESTAMP_LOOKING.test(value)) return false;
   if (/^[0-9]/.test(value) && /^[+-]?0[0-9]+$/.test(value)) return false;
   if (PLAIN_FORBIDDEN_START.has(value[0])) return false;
@@ -2297,7 +2382,20 @@ function quoteYamlString(value) {
   return escaped;
 }
 
-function formatScalar(value, path) {
+function validateSerializedString(value, path, options) {
+  const length = utf8Length(value);
+  if (length > options.maxStringLength) {
+    serializerError(ERROR.MAX_STRING_LENGTH, 'string scalar length limit exceeded', path, {
+      limit: options.maxStringLength,
+      actual: length
+    });
+  }
+  if (hasBidiControl(value)) {
+    serializerError(ERROR.CONTROL_CHARACTER, 'strings with bidirectional control characters cannot be serialized', path);
+  }
+}
+
+function formatScalar(value, path, options) {
   if (value === null) return 'null';
   if (value === true) return 'true';
   if (value === false) return 'false';
@@ -2308,6 +2406,7 @@ function formatScalar(value, path) {
     return Object.is(value, -0) ? '-0' : String(value);
   }
   if (typeof value === 'string') {
+    validateSerializedString(value, path, options);
     const quoted = quoteYamlString(value);
     if (quoted === null) {
       serializerError(ERROR.LONE_SURROGATE, 'strings with lone UTF-16 surrogates cannot be serialized', path);
@@ -2319,16 +2418,124 @@ function formatScalar(value, path) {
   });
 }
 
-function isPlainObjectInput(value) {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === null || prototype === Object.prototype;
+const objectHasOwn = Object.prototype.hasOwnProperty;
+
+function uninspectableValue(path) {
+  serializerError(ERROR.UNSUPPORTED_VALUE, 'object properties cannot be inspected safely', path, { actual: 'uninspectable object' });
+}
+
+function assertSerializableShape(node, path) {
+  const isArray = Array.isArray(node);
+  let prototype;
+  let symbols;
+  try {
+    prototype = Object.getPrototypeOf(node);
+    symbols = Object.getOwnPropertySymbols(node);
+  } catch {
+    uninspectableValue(path);
+  }
+  if (!isArray && prototype !== null && prototype !== Object.prototype) {
+    serializerError(ERROR.UNSUPPORTED_VALUE, 'only plain objects can be serialized', path, { actual: 'object' });
+  }
+  if (symbols.length > 0) {
+    serializerError(ERROR.UNSUPPORTED_VALUE, 'objects with symbol keys cannot be serialized', path, { actual: 'symbol-keyed object' });
+  }
+}
+
+function readOwnDataProperty(node, key, path) {
+  let descriptor;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(node, key);
+  } catch {
+    uninspectableValue(path);
+  }
+  if (!descriptor) {
+    serializerError(ERROR.UNSUPPORTED_VALUE, 'unassigned or inconsistent object properties cannot be serialized', path);
+  }
+  if (!objectHasOwn.call(descriptor, 'value')) {
+    serializerError(ERROR.UNSUPPORTED_VALUE, 'accessor properties cannot be serialized', path, { actual: 'accessor property' });
+  }
+  return descriptor.value;
+}
+
+function validateOutputKey(key, path, options) {
+  if (isDangerousOutputKey(key)) {
+    serializerError(ERROR.PROTOTYPE_KEY, 'dangerous object keys cannot be serialized', path, { key });
+  }
+  const length = utf8Length(key);
+  if (length > options.maxKeyLength) {
+    serializerError(ERROR.MAX_KEY_LENGTH, 'mapping key length limit exceeded', path, {
+      key,
+      limit: options.maxKeyLength,
+      actual: length
+    });
+  }
+  if (hasBidiControl(key)) {
+    serializerError(ERROR.CONTROL_CHARACTER, 'keys with bidirectional control characters cannot be serialized', path, { key });
+  }
+}
+
+function objectEntriesForSerialization(node, options, path) {
+  const entries = [];
+  try {
+    for (const key in node) {
+      if (!objectHasOwn.call(node, key)) continue;
+      if (entries.length >= options.maxKeys) {
+        serializerError(ERROR.MAX_KEYS, 'mapping key count limit exceeded', path, {
+          key,
+          limit: options.maxKeys,
+          actual: entries.length + 1
+        });
+      }
+      validateOutputKey(key, path + '.' + key, options);
+      entries.push({ key, value: readOwnDataProperty(node, key, path + '.' + key) });
+    }
+  } catch (error) {
+    if (error instanceof YamlCageError) throw error;
+    uninspectableValue(path);
+  }
+  return entries;
+}
+
+function canonicalArrayIndex(key, length) {
+  if (!/^(?:0|[1-9][0-9]*)$/.test(key)) return false;
+  const index = Number(key);
+  return Number.isSafeInteger(index) && index >= 0 && index < length;
+}
+
+function validateArrayShape(node, options, path) {
+  if (node.length > options.maxSequenceLength) {
+    serializerError(ERROR.MAX_SEQUENCE_LENGTH, 'sequence length limit exceeded', path, {
+      limit: options.maxSequenceLength,
+      actual: node.length
+    });
+  }
+  try {
+    for (const key in node) {
+      if (!objectHasOwn.call(node, key)) continue;
+      if (!canonicalArrayIndex(key, node.length)) {
+        serializerError(ERROR.UNSUPPORTED_VALUE, 'arrays with additional enumerable properties cannot be serialized', path, { actual: 'array object property' });
+      }
+    }
+  } catch (error) {
+    if (error instanceof YamlCageError) throw error;
+    uninspectableValue(path);
+  }
+}
+
+function readArrayElement(node, index, path) {
+  if (!objectHasOwn.call(node, index)) {
+    serializerError(ERROR.UNSUPPORTED_VALUE, 'arrays with unassigned elements cannot be serialized', path, { actual: 'sparse array' });
+  }
+  return readOwnDataProperty(node, String(index), path);
 }
 
 function stringifySafeYaml(value, optionsInput) {
-  const options = normalizeOptions({ ...(optionsInput || {}), allowMultiDocument: false });
+  const inputOptions = normalizeOptionsDetailed(optionsInput).options;
+  const options = normalizeOptions({ ...inputOptions, allowMultiDocument: false });
   const parts = [];
   let outputBytes = 0;
+  let nodes = 0;
   const emitLine = (indent, text) => {
     const line = ' '.repeat(indent) + text + '\n';
     outputBytes += utf8Length(line);
@@ -2340,96 +2547,99 @@ function stringifySafeYaml(value, optionsInput) {
     }
     parts.push(line);
   };
+  const countSerializerNode = (path) => {
+    nodes += 1;
+    if (nodes > options.maxNodes) {
+      serializerError(ERROR.MAX_NODES, 'YAML node count limit exceeded', path, {
+        limit: options.maxNodes,
+        actual: nodes
+      });
+    }
+  };
+  const prepareCollection = (node, path, depth) => {
+    assertSerializableShape(node, path);
+    countSerializerNode(path);
+    if (depth > options.maxDepth) {
+      serializerError(ERROR.MAX_DEPTH, 'YAML nesting depth limit exceeded', path, {
+        depth,
+        limit: options.maxDepth,
+        actual: depth
+      });
+    }
+    if (Array.isArray(node)) {
+      validateArrayShape(node, options, path);
+      return { type: 'array', size: node.length, entries: null };
+    }
+    const entries = objectEntriesForSerialization(node, options, path);
+    return { type: 'map', size: entries.length, entries };
+  };
 
   if (value === null || typeof value !== 'object') {
-    emitLine(0, formatScalar(value, '$'));
+    countSerializerNode('$');
+    emitLine(0, formatScalar(value, '$', options));
     return parts.join('');
   }
 
-  const ancestors = new Set();
-  const actions = [{ type: 'node', node: value, indent: 0, path: '$', root: true }];
-  while (actions.length > 0) {
-    const action = actions.pop();
-    if (action.type === 'leave') {
-      ancestors.delete(action.node);
+  const rootMeta = prepareCollection(value, '$', 1);
+  if (rootMeta.size === 0) {
+    emitLine(0, rootMeta.type === 'array' ? '[]' : '{}');
+    return parts.join('');
+  }
+
+  const ancestors = new Set([value]);
+  const stack = [{ node: value, meta: rootMeta, index: 0, indent: 0, path: '$', depth: 1 }];
+  while (stack.length > 0) {
+    const frame = stack[stack.length - 1];
+    if (frame.index >= frame.meta.size) {
+      ancestors.delete(frame.node);
+      stack.pop();
       continue;
     }
-    if (action.type === 'node') {
-      const node = action.node;
-      if (node === null || typeof node !== 'object') {
-        emitLine(action.indent, formatScalar(node, action.path));
-        continue;
-      }
-      if (!Array.isArray(node) && !isPlainObjectInput(node)) {
-        serializerError(ERROR.UNSUPPORTED_VALUE, 'only plain objects can be serialized', action.path, { actual: 'object' });
-      }
-      if (Object.getOwnPropertySymbols(node).length > 0) {
-        serializerError(ERROR.UNSUPPORTED_VALUE, 'objects with symbol keys cannot be serialized', action.path, { actual: 'symbol-keyed object' });
-      }
-      if (ancestors.has(node)) {
-        serializerError(ERROR.CYCLE_DETECTED, 'cyclic values cannot be serialized', action.path);
-      }
-      const isArray = Array.isArray(node);
-      const keys = isArray ? node.map((unused, index) => index) : Object.keys(node);
-      if (keys.length === 0) {
-        if (action.root) emitLine(action.indent, isArray ? '[]' : '{}');
-        continue;
-      }
-      ancestors.add(node);
-      actions.push({ type: 'leave', node });
-      if (isArray) {
-        for (let index = node.length - 1; index >= 0; index -= 1) {
-          actions.push({ type: 'arrayItem', node, index, indent: action.indent, path: action.path + '[' + index + ']' });
-        }
-      } else {
-        for (let index = keys.length - 1; index >= 0; index -= 1) {
-          actions.push({ type: 'mapEntry', node, key: keys[index], indent: action.indent, path: action.path + '.' + keys[index] });
-        }
-      }
-      continue;
-    }
-    if (action.type === 'arrayItem') {
-      const child = action.node[action.index];
+
+    if (frame.meta.type === 'array') {
+      const index = frame.index;
+      frame.index += 1;
+      const childPath = frame.path + '[' + index + ']';
+      const child = readArrayElement(frame.node, index, childPath);
       if (child !== null && typeof child === 'object') {
-        if (!Array.isArray(child) && !isPlainObjectInput(child)) {
-          serializerError(ERROR.UNSUPPORTED_VALUE, 'only plain objects can be serialized', action.path, { actual: 'object' });
-        }
-        const empty = Array.isArray(child) ? child.length === 0 : Object.keys(child).length === 0;
-        if (empty) {
-          emitLine(action.indent, '- ' + (Array.isArray(child) ? '[]' : '{}'));
+        if (ancestors.has(child)) serializerError(ERROR.CYCLE_DETECTED, 'cyclic values cannot be serialized', childPath);
+        const childMeta = prepareCollection(child, childPath, frame.depth + 1);
+        if (childMeta.size === 0) {
+          emitLine(frame.indent, '- ' + (childMeta.type === 'array' ? '[]' : '{}'));
         } else {
-          emitLine(action.indent, '-');
-          actions.push({ type: 'node', node: child, indent: action.indent + 2, path: action.path, root: false });
+          emitLine(frame.indent, '-');
+          ancestors.add(child);
+          stack.push({ node: child, meta: childMeta, index: 0, indent: frame.indent + 2, path: childPath, depth: frame.depth + 1 });
         }
       } else {
-        emitLine(action.indent, '- ' + formatScalar(child, action.path));
+        countSerializerNode(childPath);
+        emitLine(frame.indent, '- ' + formatScalar(child, childPath, options));
       }
       continue;
     }
-    if (action.type === 'mapEntry') {
-      const key = action.key;
-      if (isDangerousOutputKey(key)) {
-        serializerError(ERROR.PROTOTYPE_KEY, 'dangerous object keys cannot be serialized', action.path, { key });
-      }
-      const encodedKey = quoteYamlString(key);
-      if (encodedKey === null) {
-        serializerError(ERROR.LONE_SURROGATE, 'keys with lone UTF-16 surrogates cannot be serialized', action.path, { key });
-      }
-      const child = action.node[key];
-      if (child !== null && typeof child === 'object') {
-        if (!Array.isArray(child) && !isPlainObjectInput(child)) {
-          serializerError(ERROR.UNSUPPORTED_VALUE, 'only plain objects can be serialized', action.path, { actual: 'object' });
-        }
-        const empty = Array.isArray(child) ? child.length === 0 : Object.keys(child).length === 0;
-        if (empty) {
-          emitLine(action.indent, encodedKey + ': ' + (Array.isArray(child) ? '[]' : '{}'));
-        } else {
-          emitLine(action.indent, encodedKey + ':');
-          actions.push({ type: 'node', node: child, indent: action.indent + 2, path: action.path, root: false });
-        }
+
+    const entry = frame.meta.entries[frame.index];
+    frame.index += 1;
+    const key = entry.key;
+    const childPath = frame.path + '.' + key;
+    const encodedKey = quoteYamlString(key);
+    if (encodedKey === null) {
+      serializerError(ERROR.LONE_SURROGATE, 'keys with lone UTF-16 surrogates cannot be serialized', childPath, { key });
+    }
+    const child = entry.value;
+    if (child !== null && typeof child === 'object') {
+      if (ancestors.has(child)) serializerError(ERROR.CYCLE_DETECTED, 'cyclic values cannot be serialized', childPath);
+      const childMeta = prepareCollection(child, childPath, frame.depth + 1);
+      if (childMeta.size === 0) {
+        emitLine(frame.indent, encodedKey + ': ' + (childMeta.type === 'array' ? '[]' : '{}'));
       } else {
-        emitLine(action.indent, encodedKey + ': ' + formatScalar(child, action.path));
+        emitLine(frame.indent, encodedKey + ':');
+        ancestors.add(child);
+        stack.push({ node: child, meta: childMeta, index: 0, indent: frame.indent + 2, path: childPath, depth: frame.depth + 1 });
       }
+    } else {
+      countSerializerNode(childPath);
+      emitLine(frame.indent, encodedKey + ': ' + formatScalar(child, childPath, options));
     }
   }
   return parts.join('');
@@ -2437,7 +2647,7 @@ function stringifySafeYaml(value, optionsInput) {
 
 function createYamlCage(options) {
   const normalized = normalizeOptions(options);
-  const mergeOptions = (overrides) => normalizeOptions({ ...normalized, ...(overrides || {}) });
+  const mergeOptions = (overrides) => mergeNormalizedOptions(normalized, overrides);
   return Object.freeze({
     options: normalized,
     parse(input, overrides) {

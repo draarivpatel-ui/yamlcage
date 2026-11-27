@@ -395,3 +395,49 @@ test('bare NaN is rejected as a non-finite number by default', () => {
 test('bare NaN requires explicit non-finite opt-in', () => {
   assert.equal(Number.isNaN(parseSafeYaml('a: NaN\n', { allowNonFinite: true }).a), true);
 });
+
+test('raw bidirectional controls are rejected in scalars and keys', () => {
+  const bidi = String.fromCharCode(0x202e);
+  assertCode(() => parseSafeYaml('a: x' + bidi + 'y\n'), 'YAMLCAGE_CONTROL_CHARACTER');
+  assertCode(() => parseSafeYaml(bidi + 'key: 1\n'), 'YAMLCAGE_CONTROL_CHARACTER');
+});
+
+test('escaped bidirectional controls are rejected after decoding', () => {
+  assertCode(() => parseSafeYaml('a: "\\u202e"\n'), 'YAMLCAGE_CONTROL_CHARACTER');
+  assertCode(() => parseSafeYaml('"\\u202e": 1\n'), 'YAMLCAGE_CONTROL_CHARACTER');
+});
+
+for (const codePoint of [0x061c, 0x200e, 0x200f, 0x202a, 0x202e, 0x2066, 0x2069, 0x206f]) {
+  test('bidirectional control rejected U+' + codePoint.toString(16), () => {
+    assertCode(() => parseSafeYaml('a: ' + String.fromCharCode(codePoint) + '\n'), 'YAMLCAGE_CONTROL_CHARACTER');
+  });
+}
+
+test('aliases cannot carry a tag in the safe subset', () => {
+  assertCode(() => parseSafeYaml('a: &x 1\nb: !!str *x\n', { allowAliases: true, allowSafeTags: true }), 'YAMLCAGE_SYNTAX_ERROR');
+});
+
+test('aliases cannot carry a second anchor in the safe subset', () => {
+  assertCode(() => parseSafeYaml('a: &x 1\nb: &y *x\n', { allowAliases: true }), 'YAMLCAGE_SYNTAX_ERROR');
+});
+
+for (const [source, expected] of [
+  ['010', '010'],
+  ['1.0', '1.0'],
+  ['true', 'true'],
+  ['null', 'null'],
+  ['~', '~'],
+  ['0x10', '0x10']
+]) {
+  test('explicit string tag preserves scalar lexical form ' + source, () => {
+    assert.equal(parseSafeYaml('a: !!str ' + source + '\n', { allowSafeTags: true }).a, expected);
+  });
+}
+
+test('explicit string tag on an empty scalar does not invent null text', () => {
+  assert.equal(parseSafeYaml('a: !!str\n', { allowSafeTags: true }).a, '');
+});
+
+test('explicit string tag cannot bypass the string length budget', () => {
+  assertCode(() => parseSafeYaml('a: !!str 123456\n', { allowSafeTags: true, maxStringLength: 3 }), 'YAMLCAGE_MAX_STRING_LENGTH');
+});

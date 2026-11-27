@@ -272,3 +272,16 @@ test('CLI to-json reads a regular file', () => {
     scratch.cleanup();
   }
 });
+
+test('CLI error output neutralizes newline injection', () => {
+  const result = runCli(['bad\nINJECTED']);
+  assert.equal(result.status, 2);
+  assert.equal(result.stderr.startsWith('yamlcage: unknown command bad?INJECTED\n'), true);
+});
+
+test('CLI error output neutralizes carriage return and tab injection', () => {
+  const result = runCli(['bad\rcommand\tname']);
+  assert.equal(result.status, 2);
+  assert.equal(result.stderr.includes('\r'), false);
+  assert.equal(result.stderr.includes('\t'), false);
+});

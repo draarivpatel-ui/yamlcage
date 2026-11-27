@@ -48,12 +48,12 @@ applications to several independent attack classes:
   `parseSafeYamlDocuments` or enables multi-document auditing.
 - **Resource exhaustion.** Input bytes, nesting depth, total nodes, keys per
   mapping, sequence length, string length, key length, document count, alias
-  count, alias depth, alias-expanded nodes and serialized output bytes all have
-  explicit limits.
+  count, alias depth, alias-expanded nodes, audit findings and serialized
+  output bytes all have explicit limits.
 - **Encoding confusion.** Byte input is decoded with a fatal UTF-8 decoder.
   UTF-16 and UTF-32 byte order marks are rejected. UTF-8 byte order marks are
-  rejected by default. Lone UTF-16 surrogates and raw control bytes are
-  rejected.
+  rejected by default. Lone UTF-16 surrogates, raw control bytes and
+  bidirectional control characters are rejected.
 
 ## Install and module format
 
@@ -244,7 +244,12 @@ Strings that downstream YAML 1.1 or YAML 1.2 parsers could reinterpret are
 always quoted. This includes `"yes"`, `"no"`, `"on"`, `"off"`, `"true"`,
 `"null"` and `"010"`. Cycles, non-finite numbers, lone surrogates, dangerous
 keys, class instances, functions, symbols, bigints and `undefined` are
-rejected. Output is capped by `maxOutputBytes` in UTF-8 bytes.
+rejected. Output is capped by `maxOutputBytes` in UTF-8 bytes. Serializer input
+is also bounded by `maxDepth`, `maxKeys`, `maxSequenceLength`, `maxNodes`,
+`maxStringLength` and `maxKeyLength`. Accessor properties are rejected without
+being invoked, sparse arrays and arrays with extra enumerable properties are
+rejected, and traversal uses memory proportional to nesting depth rather than
+to sibling count.
 
 ```js
 const yaml = stringifySafeYaml({ country: 'NO', enabled: true });
@@ -274,6 +279,7 @@ per-call overrides, which are validated again.
 | `maxAliasDepth` | `4` | Maximum nested alias expansion chain when aliases are enabled |
 | `maxExpandedNodes` | `5000` | Maximum nodes copied through aliases when aliases are enabled |
 | `maxOutputBytes` | `1048576` | Maximum serializer output size in UTF-8 bytes |
+| `maxFindings` | `1024` | Maximum audit findings retained before the report fails closed |
 | `allowAliases` | `false` | Permit anchors and aliases under strict expansion limits |
 | `allowMergeKeys` | `false` | Permit deterministic YAML merge keys |
 | `allowSafeTags` | `false` | Permit only `!!str`, `!!int`, `!!float`, `!!bool`, `!!null`, `!!map` and `!!seq` |
@@ -347,7 +353,8 @@ Exit codes:
 The CLI uses `lstat`, conditional `O_NOFOLLOW` and `O_NONBLOCK`, and `fstat`
 for regular file input. Directories, devices, FIFOs and symlinks are rejected.
 Standard input is read with the same byte cap. Terminal-facing errors are
-neutralized for ANSI control characters and bidirectional override characters.
+neutralized for ANSI control characters, line-breaking control characters and
+bidirectional control characters.
 
 ## Finding and error codes
 
@@ -388,6 +395,7 @@ neutralized for ANSI control characters and bidirectional override characters.
 | `YAMLCAGE_UNSUPPORTED_VALUE` | Serializer input is outside the safe data model |
 | `YAMLCAGE_CYCLE_DETECTED` | Serializer input contains a cycle |
 | `YAMLCAGE_MAX_OUTPUT_BYTES` | Serializer output budget exceeded |
+| `YAMLCAGE_MAX_FINDINGS` | Audit finding output reached the reporting cap |
 
 ## Error handling
 
@@ -420,7 +428,9 @@ before nested parsing work.
 No parser can guarantee that a different downstream YAML implementation will
 interpret the same bytes identically. For highest assurance, either use
 `yamlcage` as the only parser or serialize accepted data with
-`stringifySafeYaml` before passing it onward.
+`stringifySafeYaml` before passing it onward. Bidirectional formatting
+controls are rejected rather than merely hidden, because visually reordered
+configuration text can conceal hostile structure from reviewers.
 
 ## Contributing
 
