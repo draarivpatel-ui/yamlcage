@@ -2,35 +2,20 @@
 
 ## Supported versions
 
-Only the latest published `1.x` release receives security fixes. Users should
-upgrade promptly when a security release is published.
-
 | Version | Supported |
 | --- | --- |
 | 1.x | Yes |
-| Older than 1.0.0 | No |
+| < 1.0 | No |
 
 ## Reporting a vulnerability
 
-Report suspected vulnerabilities privately through the GitHub Security
-Advisories workflow for `draarivpatel-ui/yamlcage`. Do not open a public
-issue, pull request or discussion with a working exploit payload.
+Use the private GitHub Security Advisories form: [Report a vulnerability](https://github.com/draarivpatel-ui/yamlcage/security/advisories/new). Do not open a public issue, pull request, or discussion with exploit details, secrets, private endpoints, or personal data.
 
-Include:
+Include the affected version, Node.js version, the API or CLI path used, the complete options object with secrets removed, a minimal YAML or byte fixture, the expected safe result, and the actual result or finding code.
 
-- The exact package version and Node.js version
-- Whether input came through `parseSafeYaml`, `parseSafeYamlBytes`,
-  `parseSafeYamlDocuments`, `auditYaml`, `stringifySafeYaml`, a configured
-  instance or the CLI
-- The complete options object, with secrets removed
-- A minimal YAML or byte fixture, encoded as base64 or hex when control bytes
-  matter
-- The expected safe result and the actual result or finding code
-- Whether behavior differs between ESM and CommonJS or between operating
-  systems
+## Disclosure timeline
 
-A small script that imports the package and prints the finding or error code
-is enough.
+We acknowledge reports within 48 hours. We aim to confirm or reject the report within 7 days, prepare a fix as soon as practical, and coordinate public disclosure with the reporter. Unless a shorter deadline is required by an actively exploited issue, please allow up to 90 days for a coordinated fix and disclosure.
 
 ## Scope
 
@@ -46,17 +31,14 @@ In scope:
 - Serializer output that a YAML 1.1 parser can reinterpret unsafely
 - CLI symlink, FIFO, device, terminal escape or exit-code weaknesses
 
-Out of scope:
+## Out of scope
 
-- YAML syntax outside the documented strict subset, unless accepting it causes
-  one of the security outcomes above
-- Vulnerabilities in another YAML parser that receives unvetted input
-- Resource use proportional to documented configurable limits
-- Attacks that require write access to the victim application or its trusted
-  configuration files
+YAML syntax outside the documented strict subset is out of scope unless accepting it causes one of the security outcomes above. Resource use proportional to documented configurable limits and attacks requiring write access to trusted configuration files are also out of scope.
 
-## Response goals
+## Hardening notes
 
-Critical parser bypasses should receive an initial maintainer response within
-seven days. Lower-severity hardening reports should receive an initial response
-within fourteen days. These are goals, not contractual commitments.
+The package has zero runtime dependencies. Input budgets, fail-closed validation, deterministic tests, and property-based fuzz tests are part of the maintenance bar. A report that the library marks unsafe must block the operation in the caller; audit output is a boundary signal, not proof that a downstream system is safe.
+
+## Disclosure history
+
+No published advisories yet. Fixed versions will be listed here with their advisory links.

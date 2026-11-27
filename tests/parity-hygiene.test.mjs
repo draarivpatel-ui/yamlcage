@@ -93,10 +93,11 @@ test('package metadata name and version are correct', () => {
   assert.equal(pkg.license, 'MIT');
 });
 
-test('package dependency maps are empty', () => {
+test('package has zero runtime dependencies and only the pinned fuzz development dependency', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   assert.deepStrictEqual(pkg.dependencies, {});
-  assert.deepStrictEqual(pkg.devDependencies, {});
+  assert.deepStrictEqual(Object.keys(pkg.devDependencies), ['fast-check']);
+  assert.match(pkg.devDependencies['fast-check'], /^\d+\.\d+\.\d+$/);
 });
 
 test('package engine is Node 18 or newer', () => {
@@ -182,8 +183,10 @@ test('CI covers required operating systems and Node versions', () => {
   }
 });
 
-test('node_modules is absent from the source tree', () => {
-  assert.equal(fs.existsSync(path.join(root, 'node_modules')), false);
+test('repository lockfile supports reproducible development installs', () => {
+  const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
+  assert.equal(lock.packages[''].dependencies, undefined);
+  assert.deepStrictEqual(Object.keys(lock.packages[''].devDependencies), ['fast-check']);
 });
 
 function repositoryFiles(directory = root, prefix = '') {

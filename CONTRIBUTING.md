@@ -5,7 +5,7 @@ failure are more important than broad YAML feature coverage.
 
 ## Ground rules
 
-- Keep runtime dependencies and development dependencies empty.
+- Keep runtime dependencies empty. Keep development dependencies limited to the pinned fast-check property-testing library.
 - Keep Node.js 18 compatibility, including Windows.
 - Do not use regular expressions that can catastrophically backtrack.
 - Do not convert a rejection into a warning without a documented opt-in.

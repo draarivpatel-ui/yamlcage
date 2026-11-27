@@ -1,5 +1,7 @@
 # yamlcage
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/draarivpatel-ui/yamlcage/badge)](https://scorecard.dev/viewer/?uri=github.com/draarivpatel-ui/yamlcage)
+
 `yamlcage` is a production-grade, zero-dependency YAML security library for
 Node.js. It parses a strict YAML 1.2 Core Schema subset, audits hostile input
 before trusting it, serializes safe canonical YAML, and ships a small CLI for
@@ -57,7 +59,7 @@ applications to several independent attack classes:
 
 ## Install and module format
 
-The library has no runtime dependencies and no development dependencies. It
+The library has no runtime dependencies. The only development dependency is the pinned fast-check property-testing library. It
 supports Node.js 18 and later, including Windows, through dual module exports:
 
 ```js
